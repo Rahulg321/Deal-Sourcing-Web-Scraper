@@ -54,7 +54,7 @@ async function extractVideoLinks(page: Page) {
   return videoLinks;
 }
 
-async function extractTextContent(page: Page) {
+export async function extractTextContent(page: Page) {
   const htmlContent = await page.content();
   const $ = cheerio.load(htmlContent);
   const textContent: string[] = [];

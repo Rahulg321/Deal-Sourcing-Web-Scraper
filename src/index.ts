@@ -1,136 +1,129 @@
-import openAi from "./lib/open-ai";
-import puppeteer, { Page } from "puppeteer";
-
-const fs = require("fs");
-// URL of the page we want to scrape
-const axios = require("axios");
+import { saveListingsToExcel } from "./lib/excel-sheet";
+import puppeteer, { Page, Browser } from "puppeteer";
+import dotenv from "dotenv";
 const cheerio = require("cheerio");
-const pretty = require("pretty");
-const dotenv = require("dotenv");
-const path = require("path");
+
 dotenv.config();
 
-async function scraper(html: string) {
-  const response = await openAi.chat.completions.create({
-    model: "gpt-3.5-turbo", // Specify the model
-    messages: [
-      {
-        role: "user",
-        content: `here is the html of a sample website -> ${html}. Extract all the valuable information you can in a json format and return it.`,
-      },
-    ],
-  });
+async function extractTextContent(html: string) {
+  const $ = cheerio.load(html);
 
-  return response.choices[0].message.content;
+  return $("article.wpgb-card")
+    .map((_: number, element: cheerio.Element) => ({
+      title: $(element).find("h3 a").text().trim() || "",
+      link: $(element).find("h3 a").attr("href") || "",
+      state: $(element).find("div.wpgb_state span").html() || "",
+      category: $(element).find("div.wpgb_category span").html() || "",
+      asking_price: $(element).find("div.wpgb_price").html() || "",
+      listing_code: $(element).find("div.wpgb_code").html() || "",
+      under_contract: $(element).find("div.wpgb_loi").html() || "",
+      revenue: $(element).find("div.wpgb_revenue").html() || "",
+    }))
+    .get(); // .get() converts the cheerio object to a plain array
 }
 
-async function saveImages(images: string[], outputFolder: string) {
-  const imgFolder = path.join(__dirname, outputFolder, "images");
-  for (let i = 0; i < images.length; i++) {
-    const imageUrl = images[i];
-    const timestamp = new Date().getTime();
-    const imageFileName = path.join(
-      imgFolder,
-      `image_${timestamp}_${i + 1}.jpg`
+async function extractDetailsFromDedicatedPage(page: Page, url: string) {
+  try {
+    await page.goto(url, { waitUntil: "networkidle2" });
+
+    // Extract all main text content from the dedicated page
+    const html = await page.content();
+    const $ = cheerio.load(html);
+
+    // Select all heading tags (h1 to h6) and paragraph tags
+    const mainContent = $("h1, h2, h3, h4, h5, h6, p")
+      .map((_, element) => {
+        const tagName = element.name;
+        const text = $(element).text().trim();
+        return `[${tagName.toUpperCase()}] ${text}`;
+      })
+      .get()
+      .join("\n\n");
+
+    return {
+      main_content: mainContent,
+    };
+  } catch (error: any) {
+    console.error(
+      "Error occurred while extracting details from dedicated page",
+      error.message
     );
-    try {
-      await downloadImage(imageUrl, imageFileName);
-    } catch (error) {
-      console.error("Error saving image:", error);
+    return {};
+  }
+}
+
+async function navigateToNextPage(page: Page): Promise<boolean> {
+  const html = await page.content();
+  const $ = cheerio.load(html);
+
+  const nextPageButton = $("ul.wpgb-pagination li.wpgb-page a").filter(
+    (_: number, element: cheerio.Element) =>
+      $(element).text().includes("Next →")
+  );
+
+  if (nextPageButton.length > 0) {
+    const nextPageHref = nextPageButton.attr("href");
+    if (nextPageHref) {
+      await page.goto(nextPageHref, { waitUntil: "networkidle2" });
+      return true;
+    }
+  }
+
+  return false; // No next page
+}
+
+async function main() {
+  let browser: Browser | null = null;
+
+  try {
+    const result = await initializeBrowser(
+      "https://americanhealthcarecapital.com/current-listings/"
+    );
+    if (!result) {
+      console.log("Could not load page using headless browser");
+      return;
+    }
+
+    browser = result.browser;
+    const page = result.page;
+    const allScrapedData = [];
+
+    let hasNextPage = true;
+    while (hasNextPage) {
+      const html = await page.content();
+      const scrapedData = await extractTextContent(html);
+      allScrapedData.push(...scrapedData);
+      console.log("Scraped Data from current page:", scrapedData);
+
+      hasNextPage = await navigateToNextPage(page);
+    }
+
+    console.log("All scraped data is ", allScrapedData);
+    saveListingsToExcel(allScrapedData, "listings.xlsx");
+    console.log("Done scraping all pages");
+  } catch (error: any) {
+    console.error("Error occurred", error.message);
+  } finally {
+    if (browser) {
+      await browser.close();
+      console.log("Browser closed");
     }
   }
 }
 
-async function downloadImage(url: string, filepath: string) {
-  const response = await axios({
-    url,
-    method: "GET",
-    responseType: "stream",
-  });
-
-  return new Promise((resolve, reject) => {
-    response.data
-      .pipe(fs.createWriteStream(filepath))
-      .on("finish", () => resolve(filepath))
-      .on("error", (e: Error) => reject(e));
-  });
-}
-
-async function main() {
-  try {
-  } catch (error: any) {
-    console.error("error occured", error, error.message);
-  }
-}
-main();
-
-async function SimpleScraper() {
-  const markup = `
-    <ul class="fruits">
-    <li class="fruits__mango"> Mango </li>
-    <li class="fruits__apple"> Apple </li>
-    </ul>
-    `;
-
-  //   const aiResponse = await scraper(markup);
-  //   console.log(aiResponse);
-
-  const $ = cheerio.load(markup);
-  console.log(pretty($.html()));
-  console.log($.html());
-  const mango = $(".fruits__mango");
-  console.log(mango.html()); // Mango
-
-  const listItems = $("li");
-  console.log(listItems.length); // 2
-  listItems.each(function (idx: number, el: cheerio.Element) {
-    console.log($(el).text());
-  });
-}
-
-async function scrapeData(url: string) {
-  try {
-    // Fetch HTML of the page we want to scrape
-    const { data } = await axios.get(url);
-    // Load HTML we fetched in the previous line
-    const $ = cheerio.load(data);
-    // Select all the list items in plainlist class
-    const listItems = $(".plainlist ul li");
-    // Stores data for all countries
-    const countries: { name: string; iso3: string }[] = [];
-    // Use .each method to loop through the li we selected
-    listItems.each((idx: number, el: cheerio.Element) => {
-      // Object holding data for each country/jurisdiction
-      const country = { name: "", iso3: "" };
-      // Select the text content of a and span elements
-      // Store the textcontent in the above object
-      country.name = $(el).children("a").text();
-      country.iso3 = $(el).children("span").text();
-      // Populate countries array with country data
-      countries.push(country);
-    });
-    // Logs countries array to the console
-    console.dir(countries);
-    // Write countries array in countries.json file
-    fs.writeFile(
-      "coutries.json",
-      JSON.stringify(countries, null, 2),
-      (err: any) => {
-        if (err) {
-          console.error(err);
-          return;
-        }
-        console.log("Successfully written data to file");
-      }
-    );
-  } catch (err) {
-    console.error(err);
-  }
-}
-
 async function initializeBrowser(url: string) {
-  const browser = await puppeteer.launch({ headless: true });
-  const page = await browser.newPage();
-  await page.goto(url, { waitUntil: "networkidle2" });
-  return page;
+  try {
+    const browser = await puppeteer.launch({ headless: true });
+    const page = await browser.newPage();
+    await page.goto(url, { waitUntil: "networkidle2" });
+    return { browser, page };
+  } catch (error: any) {
+    console.error(
+      "An error occurred while trying to initialize the browser",
+      error.message
+    );
+    return null;
+  }
 }
+
+main();

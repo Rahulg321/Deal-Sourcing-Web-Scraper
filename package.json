@@ -15,6 +15,7 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
+    "@types/xlsx": "^0.0.36",
     "axios": "^1.7.5",
     "cheerio": "^1.0.0",
     "concurrently": "^8.2.2",
@@ -26,7 +27,8 @@
     "pretty": "^2.0.0",
     "puppeteer": "^23.2.0",
     "rimraf": "^6.0.1",
-    "typescript": "^5.5.4"
+    "typescript": "^5.5.4",
+    "xlsx": "^0.18.5"
   },
   "devDependencies": {
     "@types/cheerio": "^0.22.35",

@@ -7,3 +7,17 @@ const openAi = new OpenAI({
 });
 
 export default openAi;
+
+async function scraper(html: string) {
+  const response = await openAi.chat.completions.create({
+    model: "gpt-4o-mini", // Specify the model
+    messages: [
+      {
+        role: "user",
+        content: `here is the html of a sample website -> ${html}. Extract all the valuable information you can in a json format and return it.`,
+      },
+    ],
+  });
+
+  return response.choices[0].message.content;
+}
